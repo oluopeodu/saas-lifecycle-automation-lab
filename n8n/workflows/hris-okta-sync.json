@@ -1,0 +1,366 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "OKTA GOTCHA — Get Users returned\n200 OK with [] even though users existed.\n\nNeeded ALL THREE at once:\n1. okta.users.read scope GRANTED on the\n   app (Okta API Scopes tab)\n2. \"View users and their details\"\n   permission on the custom role\n3. Users resource included in the\n   resource set (not just Groups)\n\nToken scope must request:\nokta.users.read okta.users.manage",
+        "height": 272
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        992,
+        -288
+      ],
+      "id": "908a7f30-78c2-4aeb-9f69-72a35a6641e6",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cd520d1b-c959-4c41-9d71-bd132674e269",
+      "name": "Test-Trigger"
+    },
+    {
+      "parameters": {
+        "useJson": true,
+        "claimsJson": "={\n  \"iss\": \"0oa170xq2dtLiqloT698\",\n  \"sub\": \"0oa170xq2dtLiqloT698\",\n  \"aud\": \"https://integrator-4769148.okta.com/oauth2/v1/token\",\n  \"iat\": {{ $now.toUnixInteger() }},\n  \"exp\": {{ $now.toUnixInteger() + 300 }},\n  \"jti\": \"{{ $execution.id }}\"\n}",
+        "headerClaims": "{\n  \"alg\": \"RS256\",\n  \"kid\": \"phpsPw3O7RX61hy07hDL6QI1t9W_ompi6-nkmjhQN4s\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jwt",
+      "typeVersion": 1,
+      "position": [
+        848,
+        0
+      ],
+      "id": "edbb2df2-4f92-417d-ba58-9d850ed5bb2c",
+      "name": "Okta-Create-Client-Assertion",
+      "credentials": {
+        "jwtAuth": {
+          "id": "cSBtvDbh154JzYsH",
+          "name": "JWT Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://integrator-4769148.okta.com/oauth2/v1/token",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "grant_type",
+              "value": "client_credentials"
+            },
+            {
+              "name": "scope",
+              "value": "okta.users.manage"
+            },
+            {
+              "name": "client_assertion_type",
+              "value": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+            },
+            {
+              "name": "client_assertion",
+              "value": "={{ $json.token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1296,
+        0
+      ],
+      "id": "df0c062f-a0ea-483a-90f2-9def05d12a50",
+      "name": "Okta-Get-Access-Token"
+    },
+    {
+      "parameters": {
+        "url": "https://integrator-4769148.okta.com/api/v1/users",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1504,
+        0
+      ],
+      "id": "87b6dea6-3162-4465-974f-ef153bdcd316",
+      "name": "Okta-Get-Users",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        864,
+        432
+      ],
+      "id": "7b87f306-ebe3-4668-919d-283f89064b4f",
+      "name": "HRIS-Split-Employees"
+    },
+    {
+      "parameters": {
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "name",
+              "field2": "profile.employeeNumber"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.compareDatasets",
+      "typeVersion": 2.3,
+      "position": [
+        1136,
+        416
+      ],
+      "id": "b7dd830b-3683-4092-bece-115df7996b25",
+      "name": "Compare-HRIS-vs-OKTA-(Datasets)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://integrator-4769148.okta.com/api/v1/users?activate=false",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Okta-Get-Access-Token').first().json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "=application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "=application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"profile\": {\n    \"firstName\": \"{{ $json.first_name }}\",\n    \"lastName\": \"{{ $json.last_name }}\",\n    \"email\": \"{{ $json.company_email }}\",\n    \"login\": \"{{ $json.company_email }}\",\n    \"secondEmail\": \"{{ $json.personal_email }}\",\n    \"employeeNumber\": \"{{ $json.name }}\",\n    \"department\": \"{{ $json.department.split(' - ')[0] }}\",\n    \"title\": \"{{ $json.designation }}\",\n    \"city\": \"{{ $json.branch }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1344,
+        208
+      ],
+      "id": "a0c1cf0b-9cd3-495e-a135-7a18923555e8",
+      "name": "OKTA-Create-User"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c7509920-8622-4eaa-a6b1-f1a9a449011f",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "Active",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        416
+      ],
+      "id": "9af10eef-b2a2-49a1-82be-536abbb102ae",
+      "name": "IF - Status is Active"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8000/api/resource/Employee",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "[\"name\",\"first_name\",\"last_name\",\"company_email\",\"personal_email\",\"status\",\"department\",\"designation\",\"branch\",\"date_of_joining\"]"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "500"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "369e06b9-4bf0-4e50-8879-59558c7299e7",
+      "name": "FrappeHR-Get-Employees",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xm2zWi6WcJ0enNb8",
+          "name": "Header Auth account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Test-Trigger": {
+      "main": [
+        [
+          {
+            "node": "FrappeHR-Get-Employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Okta-Create-Client-Assertion": {
+      "main": [
+        [
+          {
+            "node": "Okta-Get-Access-Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Okta-Get-Access-Token": {
+      "main": [
+        [
+          {
+            "node": "Okta-Get-Users",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Okta-Get-Users": {
+      "main": [
+        [
+          {
+            "node": "Compare-HRIS-vs-OKTA-(Datasets)",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HRIS-Split-Employees": {
+      "main": [
+        [
+          {
+            "node": "Compare-HRIS-vs-OKTA-(Datasets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare-HRIS-vs-OKTA-(Datasets)": {
+      "main": [
+        [
+          {
+            "node": "IF - Status is Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Status is Active": {
+      "main": [
+        [
+          {
+            "node": "OKTA-Create-User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FrappeHR-Get-Employees": {
+      "main": [
+        [
+          {
+            "node": "Okta-Create-Client-Assertion",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HRIS-Split-Employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b726312c-8105-443e-bde2-b90c15d71132",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a94e29c1f0a30a0dfc87a4732999fa9522e8c5e082806fb883c9c46ba4f3ca4b"
+  },
+  "nodeGroups": [],
+  "id": "JPVtD3TrdRSCXPya",
+  "tags": []
+}
