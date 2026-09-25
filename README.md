@@ -1,5 +1,11 @@
 # SaaS Lifecycle Automation Lab
 
+![Frappe HR](https://img.shields.io/badge/HRIS-Frappe_HR-0089FF?style=for-the-badge)
+![n8n](https://img.shields.io/badge/Workflow-n8n-EA4B71?style=for-the-badge)
+![Okta](https://img.shields.io/badge/IAM-Okta-007DC1?style=for-the-badge)
+![Terraform](https://img.shields.io/badge/IaC-Terraform-844FBA?style=for-the-badge)
+![Docker](https://img.shields.io/badge/Containers-Docker-2496ED?style=for-the-badge)
+
 A hands-on Systems Engineering project demonstrating how to automate employee identity and SaaS access lifecycle management using HR-driven workflows.
 
 ## Overview
@@ -22,46 +28,18 @@ The project is designed to demonstrate practical skills in:
 
 The lab follows an HR-driven identity lifecycle architecture:
 
-```text
-Frappe HR (HRIS)
-       |
-       | Employee data via REST API
-       v
-      n8n
- (Workflow orchestration)
-       |
-       | Okta API
-       v
-     Okta
- (Identity Provider)
-       |
-       | Provisioning / Group Push
-       v
- Google Workspace
- (SaaS applications)
+
+```mermaid
+flowchart TD
+    A["Frappe HR<br/>HRIS"] -->|"Employee data via REST API"| B["n8n<br/>Workflow orchestration"]
+    B -->|"Okta API"| C["Okta<br/>Identity Provider"]
+    C -->|"Provisioning / Group Push"| D["Google Workspace<br/>SaaS applications"]
+
+    style A fill:#e1f5fe,stroke:#0288d1,color:#01579b
+    style B fill:#fce4ec,stroke:#c2185b,color:#880e4f
+    style C fill:#e8eaf6,stroke:#3949ab,color:#1a237e
+    style D fill:#e8f5e9,stroke:#388e3c,color:#1b5e20
 ```
-
- ## Implemented Features
-
-### HRIS-to-Okta Synchronization
-
-- Retrieve employee records from Frappe HR using its REST API.
-- Orchestrate HR data processing with n8n.
-- Compare HRIS employee records with existing Okta users.
-- Use the Frappe HR Employee ID as the identity matching attribute in Okta (`employeeNumber`).
-- Create Okta user accounts for eligible employees.
-
-### Identity Lifecycle Management
-
-- Explore Joiner-Mover-Leaver (JML) lifecycle automation.
-- Classify employee records based on HR and Okta data.
-- Support user activation and profile updates through Okta workflows.
-
-### Infrastructure and SaaS Administration
-
-- Run the lab components locally using Docker Compose.
-- Manage selected Cloudflare DNS resources with Terraform.
-- Automate Google Workspace user creation using GAM7.
 
 
 ## Implemented Features
@@ -85,7 +63,6 @@ Frappe HR (HRIS)
 - Run the lab components locally using Docker Compose.
 - Manage selected Cloudflare DNS resources with Terraform.
 - Automate Google Workspace user creation using GAM7.
-
 
 ## Implementation Status
 
