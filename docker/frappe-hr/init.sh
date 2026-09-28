@@ -1,9 +1,9 @@
-#!bin/bash
-
+#!/bin/bash
+set -e
 if [ -d "/home/frappe/frappe-bench/apps/frappe" ]; then
-    echo "Bench already exists, skipping init"
+    echo "Bench already exists, starting..."
     cd frappe-bench
-    bench start
+    exec bench start
 else
     echo "Creating new bench..."
 fi
@@ -29,8 +29,8 @@ bench get-app hrms
 
 bench new-site hrms.localhost \
 --force \
---mariadb-root-password 123 \
---admin-password admin \
+--mariadb-root-password "$MYSQL_ROOT_PASSWORD" \
+--admin-password "$FRAPPE_ADMIN_PASSWORD" \
 --no-mariadb-socket
 
 bench --site hrms.localhost install-app hrms

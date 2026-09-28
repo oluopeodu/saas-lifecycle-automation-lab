@@ -1,0 +1,2 @@
+gcp_org_id        = "REPLACE_WITH_YOUR_GOOGLE_CLOUD_ORG_ID"
+gcp_billing_account = "REPLACE_WITH_YOUR_BILLING_ACCOUNT_ID"
