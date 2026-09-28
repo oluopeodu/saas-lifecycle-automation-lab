@@ -99,3 +99,59 @@ The following tools and accounts are used to build and operate the lab:
 - A Cloudflare account for DNS automation
 
 Some integrations require API credentials and service account configuration. Keep credentials in local environment variables or secret-management systems and never commit them to Git.
+
+
+
+## Identity Matching and Lifecycle Logic
+
+### Identity Matching
+
+The lab uses the Frappe HR Employee ID as the primary identity matching attribute.
+
+| Frappe HR | Okta |
+|---|---|
+| Employee ID (`name`) | `profile.employeeNumber` |
+| First name | First name |
+| Last name | Last name |
+| Company email | Email and login |
+
+Using the HR-generated Employee ID as the matching key helps maintain a consistent identity reference across systems, independently of changes to an employee's email address.
+
+### Lifecycle Classification
+
+The n8n workflow compares employee records retrieved from Frappe HR with existing Okta users.
+
+The comparison supports the identification of employee records that require further processing, including:
+
+- New employees who may need an Okta account.
+- Existing employees whose HR data may require updates.
+- Employee records that already have a corresponding Okta identity.
+
+The workflow uses HR and Okta data to determine the appropriate processing path.
+
+Further lifecycle scenarios, including complete leaver processing and rehire handling, remain subject to additional implementation and validation.
+
+
+## n8n Workflow
+
+n8n acts as the orchestration layer between Frappe HR and Okta. It retrieves employee records, compares them with existing Okta identities, and routes eligible records for processing.
+
+### Workflow Stages
+
+| Stage | Description |
+|---|---|
+| 1. Retrieve HR Data | Fetch employee records from Frappe HR through its REST API. |
+| 2. Split Employee Records | Process the retrieved employee records as individual workflow items. |
+| 3. Authenticate with Okta | Obtain an Okta API access token using a client assertion. |
+| 4. Retrieve Okta Users | Fetch existing Okta users for identity comparison. |
+| 5. Compare Identities | Match HR records with Okta users using the Frappe HR Employee ID and Okta `profile.employeeNumber`. |
+| 6. Evaluate Employee Status | Check employee status and route eligible records for further processing. |
+| 7. Create Okta User | Send eligible new employee records to the Okta user creation operation. |
+
+### Workflow Design
+
+The workflow separates HR data retrieval, identity comparison, and Okta account operations into distinct stages.
+
+This design makes it easier to inspect individual steps, troubleshoot API responses, and extend the automation as additional lifecycle scenarios are implemented.
+
+The current implementation focuses on HRIS-to-Okta synchronization and eligible user creation. Complete leaver processing and rehire handling require further implementation and validation.
