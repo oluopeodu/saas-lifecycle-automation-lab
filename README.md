@@ -155,3 +155,61 @@ The workflow separates HR data retrieval, identity comparison, and Okta account 
 This design makes it easier to inspect individual steps, troubleshoot API responses, and extend the automation as additional lifecycle scenarios are implemented.
 
 The current implementation focuses on HRIS-to-Okta synchronization and eligible user creation. Complete leaver processing and rehire handling require further implementation and validation.
+
+
+
+### Workflow File
+
+The exported n8n workflow is available in the repository:
+
+[View the n8n workflow JSON](n8n/workflows/hris-okta-sync.json)
+
+The export contains the workflow structure and node configuration. Credentials and secrets should be configured separately in the local environment.
+
+
+---
+
+## Okta and Google Workspace
+
+### Okta — Identity Management
+
+Okta acts as the central identity provider in the lab.
+
+The integration explores:
+
+- User creation through the Okta Management API.
+- Identity matching using the Frappe HR Employee ID stored in `profile.employeeNumber`.
+- User profile updates and lifecycle operations.
+- Group-based application access management.
+
+### Google Workspace — SaaS Provisioning
+
+Google Workspace serves as the downstream SaaS environment.
+
+The lab includes:
+
+- User administration using GAM7.
+- Department-based Google Groups, such as `engineering@oluopeodu.com`.
+- Okta group assignment and Google Workspace group integration.
+
+Further validation of automated provisioning and group push is ongoing.
+
+
+---
+
+## Infrastructure and Infrastructure as Code
+
+### Docker Compose
+
+Docker Compose is used to run the lab's local services:
+
+- Frappe HR and its supporting services.
+- n8n for workflow orchestration.
+
+### Terraform
+
+Terraform manages selected infrastructure resources, including Cloudflare DNS records.
+
+The Terraform configuration is maintained in the `terraform/` directory.
+
+Infrastructure automation is still being expanded as the lab evolves.
