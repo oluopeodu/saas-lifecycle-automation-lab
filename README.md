@@ -213,3 +213,12 @@ Terraform manages selected infrastructure resources, including Cloudflare DNS re
 The Terraform configuration is maintained in the `terraform/` directory.
 
 Infrastructure automation is still being expanded as the lab evolves.
+
+
+## Limitations and Future Improvements
+
+### API Pagination and Lab Scope
+
+The workflow retrieves Okta users in a single API request, with a maximum page size of 200 users, and Frappe HR employees using `limit_page_length=500`. These limits are sufficient for this lab's intended scale.
+
+A production implementation would handle pagination by following Okta's `Link: rel="next"` response header and retrieving subsequent Frappe employee pages as needed.
