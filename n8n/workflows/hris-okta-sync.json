@@ -1,20 +1,6 @@
 {
-  "name": "My workflow",
+  "name": "hris-okta-sync",
   "nodes": [
-    {
-      "parameters": {
-        "content": "OKTA GOTCHA — Get Users returned\n200 OK with [] even though users existed.\n\nNeeded ALL THREE at once:\n1. okta.users.read scope GRANTED on the\n   app (Okta API Scopes tab)\n2. \"View users and their details\"\n   permission on the custom role\n3. Users resource included in the\n   resource set (not just Groups)\n\nToken scope must request:\nokta.users.read okta.users.manage",
-        "height": 272
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        992,
-        -288
-      ],
-      "id": "908a7f30-78c2-4aeb-9f69-72a35a6641e6",
-      "name": "Sticky Note2"
-    },
     {
       "parameters": {},
       "type": "n8n-nodes-base.manualTrigger",
@@ -87,7 +73,7 @@
     },
     {
       "parameters": {
-        "url": "https://integrator-4769148.okta.com/api/v1/users",
+        "url": "https://integrator-4769148.okta.com/api/v1/users?search=profile.employeeNumber%20sw%20%22HR-%22",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -106,7 +92,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1504,
+        1856,
         0
       ],
       "id": "87b6dea6-3162-4465-974f-ef153bdcd316",
@@ -121,32 +107,11 @@
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
       "position": [
-        864,
-        432
+        416,
+        544
       ],
       "id": "7b87f306-ebe3-4668-919d-283f89064b4f",
       "name": "HRIS-Split-Employees"
-    },
-    {
-      "parameters": {
-        "mergeByFields": {
-          "values": [
-            {
-              "field1": "name",
-              "field2": "profile.employeeNumber"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.compareDatasets",
-      "typeVersion": 2.3,
-      "position": [
-        1136,
-        416
-      ],
-      "id": "b7dd830b-3683-4092-bece-115df7996b25",
-      "name": "Compare-HRIS-vs-OKTA-(Datasets)"
     },
     {
       "parameters": {
@@ -171,51 +136,17 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"profile\": {\n    \"firstName\": \"{{ $json.first_name }}\",\n    \"lastName\": \"{{ $json.last_name }}\",\n    \"email\": \"{{ $json.company_email }}\",\n    \"login\": \"{{ $json.company_email }}\",\n    \"secondEmail\": \"{{ $json.personal_email }}\",\n    \"employeeNumber\": \"{{ $json.name }}\",\n    \"department\": \"{{ $json.department.split(' - ')[0] }}\",\n    \"title\": \"{{ $json.designation }}\",\n    \"city\": \"{{ $json.branch }}\"\n  }\n}",
+        "jsonBody": "={{ { \"profile\": $json.profile } }}",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [
-        1344,
-        208
+        2288,
+        512
       ],
       "id": "a0c1cf0b-9cd3-495e-a135-7a18923555e8",
       "name": "OKTA-Create-User"
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict",
-            "version": 3
-          },
-          "conditions": [
-            {
-              "id": "c7509920-8622-4eaa-a6b1-f1a9a449011f",
-              "leftValue": "={{ $json.status }}",
-              "rightValue": "Active",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1344,
-        416
-      ],
-      "id": "9af10eef-b2a2-49a1-82be-536abbb102ae",
-      "name": "IF - Status is Active"
     },
     {
       "parameters": {
@@ -227,7 +158,7 @@
           "parameters": [
             {
               "name": "fields",
-              "value": "[\"name\",\"first_name\",\"last_name\",\"company_email\",\"personal_email\",\"status\",\"department\",\"designation\",\"branch\",\"date_of_joining\"]"
+              "value": "[\"name\",\"first_name\",\"last_name\",\"company_email\",\"personal_email\",\"status\",\"department\",\"designation\",\"branch\",\"date_of_joining\",\"custom_worker_type\",\"employment_type\",\"custom_access_sponsor\",\"contract_end_date\",\"reports_to\",\"relieving_date\"]"
             },
             {
               "name": "limit_page_length",
@@ -251,6 +182,700 @@
           "name": "Header Auth account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Prepare-Okta-Identity\n// n8n Code node | JavaScript | Mode: Run Once for All Items\n// Position: after \"Merge\", before \"Identity - Classify HRIS vs Okta\"\n//\n// Validates HR data and builds the canonical Okta profile.\n// This node does NOT decide effective HR state (Active / Left /\n// end date reached). That is decided in:\n//   - \"Identity - Classify HRIS vs Okta\"\n//   - \"Offboarding - Detect Candidates\"\n// using the 18:00 Europe/Berlin date rule.\n// ============================================================\n\n// ---------- Configuration ----------\nconst DOMAIN = 'oluopeodu.com';\nconst CONTRACTOR_SUFFIX = '.ext';\n\n// V6: valid Worker Type / Employment Type combinations\nconst VALID_EMPLOYMENT_TYPES = {\n  Employee:   ['Full-time', 'Part-time', 'Probation', 'Apprentice', 'Working Student', 'Temporary'],\n  Intern:     ['Intern'],\n  Contractor: ['Contract']\n};\n\n// ---------- Helpers ----------\nconst clean = (value) =>\n  (value || '')\n    .toString()\n    .toLowerCase()\n    .replace(/ä/g, 'ae')\n    .replace(/ö/g, 'oe')\n    .replace(/ü/g, 'ue')\n    .replace(/ß/g, 'ss')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/[^a-z0-9]/g, '');\n\nconst stripCompanySuffix = (dept) =>\n  (dept || '').replace(/\\s+-\\s+[A-Za-z0-9]+\\s*$/, '').trim();\n\nconst isIsoDate = (d) => /^\\d{4}-\\d{2}-\\d{2}$/.test(d || '');\n\n// ---------- Reference data ----------\n\n// Existing Okta users — used only for email/login collision detection.\nconst oktaUsers = $('Okta-Get-Users')\n  .all()\n  .flatMap((i) => (Array.isArray(i.json) ? i.json : [i.json]));\n\nconst existingAddresses = new Map();\n\nfor (const u of oktaUsers) {\n  const p = u.profile || {};\n\n  for (const address of [p.login, p.email]) {\n    if (address) {\n      existingAddresses.set(\n        address.toLowerCase(),\n        p.employeeNumber || ''\n      );\n    }\n  }\n}\n\n// Frappe HR — source of truth for sponsor validation.\nconst hrRecords = new Map();\n\nfor (const r of $('HRIS-Split-Employees').all()) {\n  hrRecords.set(r.json.name, r.json);\n}\n\n// Addresses generated earlier in this same execution.\nconst claimed = new Set();\n\nconst output = [];\n\n// ---------- Process each HR record ----------\nfor (const item of $input.all()) {\n  const e = item.json;\n  const errors = [];\n\n  const workerType = e.custom_worker_type;\n  const employmentType = e.employment_type;\n\n  // ----- Basic validation -----\n  if (!VALID_EMPLOYMENT_TYPES[workerType]) {\n    errors.push('Invalid Worker Type');\n  }\n\n  if (!e.first_name || !e.last_name) {\n    errors.push('Missing first or last name');\n  }\n\n  // ----- V7: Department required -----\n  if (!e.department) {\n    errors.push('V7: Department is required');\n  }\n\n  // ----- V1: ID prefix must match Worker Type -----\n  const hasContractorPrefix = (e.name || '').startsWith('HR-CTR-');\n\n  if (hasContractorPrefix !== (workerType === 'Contractor')) {\n    errors.push('V1: ID prefix does not match Worker Type');\n  }\n\n  // ----- V6: Worker Type / Employment Type combination -----\n  if (\n    VALID_EMPLOYMENT_TYPES[workerType] &&\n    !VALID_EMPLOYMENT_TYPES[workerType].includes(employmentType)\n  ) {\n    errors.push(\n      `V6: Employment Type \"${employmentType}\" is not valid for ${workerType}`\n    );\n  }\n\n  // ----- V2: Contractors require Access Sponsor -----\n  if (workerType === 'Contractor' && !e.custom_access_sponsor) {\n    errors.push('V2: Contractor requires Access Sponsor');\n  }\n\n  // ----- V3: Contractors require an end date -----\n  const needsEndDate = workerType === 'Contractor';\n\n  if (needsEndDate && !e.contract_end_date) {\n    errors.push('V3: Contract End Date is required');\n  }\n\n  // Past end dates are NOT validated here.\n  // Effective HR state (incl. 18:00 Berlin cutoff) is decided in\n  // \"Identity - Classify HRIS vs Okta\" and \"Offboarding - Detect Candidates\".\n\n  // ----- V4: Sponsor validation -----\n  if (workerType === 'Contractor' && e.custom_access_sponsor) {\n    const sponsorId = e.custom_access_sponsor;\n    const sponsor = hrRecords.get(sponsorId);\n\n    if (sponsorId === e.name) {\n      errors.push('V4: A contractor cannot sponsor themselves');\n    } else if (!sponsor) {\n      errors.push(`V4: Sponsor ${sponsorId} not found in HRIS`);\n    } else {\n      if (sponsor.status !== 'Active') {\n        errors.push(\n          `V4: Sponsor ${sponsorId} is not Active in HRIS`\n        );\n      }\n\n      if (sponsor.custom_worker_type !== 'Employee') {\n        errors.push(\n          'V4: Sponsor must have Worker Type Employee'\n        );\n      }\n\n      if (\n        sponsor.date_of_joining &&\n        e.date_of_joining &&\n        sponsor.date_of_joining > e.date_of_joining\n      ) {\n        errors.push(\n          'V4: Sponsor starts after the contractor'\n        );\n      }\n\n      // Intentionally NO sponsor end-date comparison here.\n      // A sponsor may leave while the contractor is still active.\n      // A separate lifecycle process will detect an inactive\n      // sponsor and alert IT/HR.\n    }\n  }\n\n  // ----- V5: End date cannot precede start date -----\n  if (\n    isIsoDate(e.date_of_joining) &&\n    isIsoDate(e.contract_end_date) &&\n    e.contract_end_date < e.date_of_joining\n  ) {\n    errors.push(\n      'V5: Contract End Date cannot be before Date of Joining'\n    );\n  }\n\n  // ----- Email / login -----\n  // Use Frappe company_email if supplied.\n  // Otherwise generate the corporate login.\n  let email = (e.company_email || '').trim().toLowerCase();\n\n  const generatedEmail = !email;\n\n  if (generatedEmail) {\n    const first = clean(e.first_name);\n    const last = clean(e.last_name);\n\n    if (!first || !last) {\n      errors.push(\n        'Cannot generate an email address from this name'\n      );\n    } else {\n      const suffix =\n        workerType === 'Contractor'\n          ? CONTRACTOR_SUFFIX\n          : '';\n\n      email = `${first}.${last}${suffix}@${DOMAIN}`;\n    }\n  }\n\n  // ----- V9: Email validation and collision detection -----\n  if (email) {\n    if (\n      !/^[^@\\s]+@[^@\\s]+$/.test(email) ||\n      !email.endsWith(`@${DOMAIN}`)\n    ) {\n      errors.push(\n        `V9: Email must be a valid address on @${DOMAIN}`\n      );\n    }\n\n    // Collision = STOP.\n    // Never automatically create .2 / .3 variants.\n    const owner = existingAddresses.get(email);\n\n    if (owner !== undefined && owner !== e.name) {\n      errors.push(\n        `V9: EMAIL COLLISION: ${email} already belongs to ${\n          owner || 'another Okta user'\n        }`\n      );\n    }\n\n    // Collision inside the same execution.\n    if (claimed.has(email)) {\n      errors.push(\n        `V9: EMAIL COLLISION: ${email} was generated more than once in this run`\n      );\n    }\n\n    claimed.add(email);\n  }\n\n  // ----------------------------------------------------------\n  // Resolve Access Sponsor name for the human-readable Okta profile\n  //\n  // Frappe stores:  custom_access_sponsor = HR-EMP-00001\n  // Okta stores:    accessSponsor = Idan Nla\n  //\n  // The Frappe employee ID remains the authoritative relationship.\n  // ----------------------------------------------------------\n  const sponsorRecord = e.custom_access_sponsor\n    ? hrRecords.get(e.custom_access_sponsor)\n    : null;\n\n  const accessSponsorName = sponsorRecord\n    ? `${sponsorRecord.first_name || ''} ${sponsorRecord.last_name || ''}`.trim()\n    : undefined;\n\n  // ----- Canonical Okta profile -----\n  // managerId is not set yet: Frappe reports_to must first be\n  // resolved to an Okta user (separate identity-resolution step).\n  const profile = {\n    firstName: e.first_name,\n    lastName: e.last_name,\n    email: email,\n    login: email,\n    secondEmail: e.personal_email || undefined,\n    employeeNumber: e.name,\n    department: stripCompanySuffix(e.department),\n    title: e.designation || undefined,\n    city: e.branch || undefined,\n    workerType: workerType,\n    employmentType: employmentType || undefined,\n    accessSponsor: accessSponsorName,\n    engagementEndDate: e.contract_end_date || undefined\n  };\n\n  output.push({\n    json: {\n      identityOk: errors.length === 0,\n      errors,\n      errorSummary: errors.join(' | '),\n      hrId: e.name,\n      generatedEmail,\n      proposedEmail: email,\n      workerType,\n      employmentType,\n      profile\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        496
+      ],
+      "id": "2a065722-c147-47b5-bdc3-bb5197a03c38",
+      "name": "Prepare-Okta-Identity"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1072,
+        432
+      ],
+      "id": "99001f07-3678-4268-99c8-e3ab10c1d58e",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// n8n Code node | JavaScript | Run Once for All Items\n//\n// Match key:\n//   Frappe HR name <-> Okta profile.employeeNumber\n//\n// Actions:\n//   joiner | rehire | no_change | mover | okta_only\n//\n// Guards:\n//   invalid | conflict\n//\n// HR state model (see hrState()):\n//   offboardingSignal = status === 'Left'\n//                       OR relieving_date reached\n//                       OR contractor contract_end_date reached\n//                       (dates: from 18:00 Europe/Berlin on that date)\n//   active            = status === 'Active' AND NOT offboardingSignal\n//\n// Ownership rules:\n//   - Only an effectively Active HR record may become a joiner,\n//     trigger a rehire, or receive mover updates.\n//   - HR record with an offboarding signal: the offboarding branch\n//     owns the lifecycle transition; classification does nothing.\n//   - HR record neither active nor offboarding (e.g. Inactive,\n//     Suspended): no automated owner; classification reports\n//     \"review required\" and does nothing.\n//\n//   IMPORTANT: offboardingSignal must stay identical to the\n//   triggers in \"Offboarding - Detect Candidates\".\n// ============================================================\n\n\n// ---------- Configuration ----------\n\n// Only Okta users in our managed HR identity namespace.\nconst MANAGED_ID = /^HR-(EMP|CTR)-\\d+$/;\n\n// These are the canonical attributes used for mover detection.\n// email, login and employeeNumber are deliberately excluded.\nconst COMPARED_FIELDS = [\n  'firstName',\n  'lastName',\n  'secondEmail',\n  'department',\n  'title',\n  'city',\n  'workerType',\n  'employmentType',\n  'accessSponsor',\n  'engagementEndDate'\n];\n\n\n// ---------- Date rule (keep identical to Detect Candidates) ----------\n\nconst now = $now.setZone('Europe/Berlin');\nconst today = now.toISODate();\nconst currentTime = now.toFormat('HH:mm');\n\nconst dateSignalReached = (date) => {\n  if (!date) {\n    return false;\n  }\n\n  return (\n    date < today ||\n    (date === today && currentTime >= '18:00')\n  );\n};\n\n\n// ---------- Helpers ----------\n\nconst norm = (value) => {\n  if (value === undefined || value === null) {\n    return '';\n  }\n\n  return String(value).trim();\n};\n\n// Effective HR state of one HR record.\n//\n//   active:            true only if status Active and no offboarding signal\n//   offboardingSignal: true if Detect Candidates would pick this record up\n//   label:             human-readable explanation for reasons / audit\nconst hrState = (hris) => {\n\n  if (!hris) {\n    return {\n      active: false,\n      offboardingSignal: false,\n      label: 'missing'\n    };\n  }\n\n  const isLeft = hris.status === 'Left';\n\n  const relievingDateReached =\n    dateSignalReached(hris.relieving_date);\n\n  const contractorEndDateReached =\n    hris.custom_worker_type === 'Contractor' &&\n    dateSignalReached(hris.contract_end_date);\n\n  const offboardingSignal =\n    isLeft ||\n    relievingDateReached ||\n    contractorEndDateReached;\n\n  const details = [];\n\n  if (relievingDateReached) {\n    details.push(`relieving_date ${hris.relieving_date} reached`);\n  }\n\n  if (contractorEndDateReached) {\n    details.push(`contract_end_date ${hris.contract_end_date} reached`);\n  }\n\n  const label = details.length\n    ? `${hris.status}; ${details.join('; ')}`\n    : hris.status;\n\n  return {\n    active: hris.status === 'Active' && !offboardingSignal,\n    offboardingSignal,\n    label\n  };\n};\n\n\n// ---------- Reference: existing Okta users ----------\n\nconst oktaUsers = $('Okta-Get-Users')\n  .all()\n  .flatMap((item) =>\n    Array.isArray(item.json)\n      ? item.json\n      : [item.json]\n  );\n\nconst oktaByHrId = new Map();\nconst duplicateIds = new Set();\n\nfor (const user of oktaUsers) {\n\n  const profile = user.profile || {};\n  const hrId = profile.employeeNumber;\n\n  // Ignore Okta admins, service accounts, etc.\n  if (!hrId || !MANAGED_ID.test(hrId)) {\n    continue;\n  }\n\n  if (oktaByHrId.has(hrId)) {\n    duplicateIds.add(hrId);\n  }\n\n  oktaByHrId.set(hrId, user);\n}\n\n\n// ---------- Reference: all Frappe HR records ----------\n\nconst hrById = new Map();\n\nfor (const item of $('HRIS-Split-Employees').all()) {\n\n  hrById.set(\n    item.json.name,\n    item.json\n  );\n}\n\n\n// ---------- Track HRIS identities processed ----------\n\nconst processed = new Set();\n\nconst output = [];\n\n\n// ============================================================\n// CLASSIFY HRIS IDENTITIES\n// (all HR records arrive here; effective HR state decides\n//  which actions are allowed)\n// ============================================================\n\nfor (const item of $input.all()) {\n\n  const prepared = item.json;\n  const hrId = prepared.hrId;\n\n  processed.add(hrId);\n\n  // Authoritative HR record (source of truth).\n  const hris = hrById.get(hrId);\n  const state = hrState(hris);\n\n  const result = {\n    hrId,\n    action: null,\n    reason: '',\n    oktaUserId: null,\n    oktaStatus: null,\n\n    changes: [],\n    changeCount: 0,\n    changeSummary: '',\n\n    updatePayload: null,\n\n    errorSummary: prepared.errorSummary || '',\n\n    profile: prepared.profile\n  };\n\n\n  // ----------------------------------------------------------\n  // Validation failed during identity preparation\n  // ----------------------------------------------------------\n\n  if (!prepared.identityOk) {\n\n    result.action = 'invalid';\n    result.reason = 'Failed identity validation';\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // Find existing Okta identity\n  // ----------------------------------------------------------\n\n  const match = oktaByHrId.get(hrId);\n\n\n  // Duplicate employeeNumber in Okta\n  // requires human investigation.\n  if (duplicateIds.has(hrId)) {\n\n    result.action = 'conflict';\n\n    result.reason =\n      'More than one Okta user has this employeeNumber';\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // No Okta identity and HR record is not effectively Active\n  //\n  // Never create an account for a Left, inactive, missing,\n  // or date-expired HR record.\n  // ----------------------------------------------------------\n\n  if (!match && !state.active) {\n\n    result.action = 'no_change';\n\n    result.reason =\n      `No Okta identity and HRIS state is \"${state.label}\"; account creation skipped`;\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // No Okta identity and HR record is effectively Active → JOINER\n  // ----------------------------------------------------------\n\n  if (!match) {\n\n    result.action = 'joiner';\n    result.reason = 'Active HRIS identity does not exist in Okta';\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // Existing Okta identity\n  // ----------------------------------------------------------\n\n  result.oktaUserId = match.id;\n  result.oktaStatus = match.status;\n\n\n  // ----------------------------------------------------------\n  // DEPROVISIONED Okta identity\n  //\n  // Reactivate only if the HR record is effectively Active:\n  // status Active AND no end date reached.\n  // A stale \"Active\" next to a past end date is NOT a rehire.\n  // ----------------------------------------------------------\n\n  if (match.status === 'DEPROVISIONED') {\n\n    if (!state.active) {\n\n      result.action = 'no_change';\n\n      result.reason =\n        `Okta account is DEPROVISIONED and HRIS state is \"${state.label}\"; reactivation skipped`;\n\n      output.push({\n        json: result\n      });\n\n      continue;\n    }\n\n    // HR says the person is working again\n    // (e.g. end date extended, or relieving date cleared).\n    result.action = 'rehire';\n\n    result.reason =\n      'Effectively Active HRIS identity matches a DEPROVISIONED Okta account';\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // Existing Okta identity, HR record NOT effectively Active\n  //\n  // Classification never updates such an identity.\n  //   - offboarding signal present → offboarding branch owns it\n  //   - no offboarding signal (e.g. Inactive, Suspended)\n  //     → no automated owner, human review required\n  // ----------------------------------------------------------\n\n  if (!state.active) {\n\n    result.action = 'no_change';\n\n    result.reason = state.offboardingSignal\n      ? `Okta account is ${match.status} and HRIS state is \"${state.label}\"; lifecycle update skipped because offboarding owns this identity`\n      : `Okta account is ${match.status} and HRIS state is \"${state.label}\"; no automated lifecycle owner, review required`;\n\n    output.push({\n      json: result\n    });\n\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // Compare canonical HRIS profile against Okta profile\n  // (only effectively Active HR records reach this point)\n  // ----------------------------------------------------------\n\n  const oktaProfile = match.profile || {};\n\n  const updateProfile = {};\n\n\n  for (const field of COMPARED_FIELDS) {\n\n    const from = norm(oktaProfile[field]);\n    const to = norm(prepared.profile[field]);\n\n    if (from !== to) {\n\n      result.changes.push({\n        field,\n        from,\n        to\n      });\n\n      updateProfile[field] =\n        to === ''\n          ? null\n          : to;\n    }\n  }\n\n\n  // ----------------------------------------------------------\n  // Determine action explicitly from change count\n  // ----------------------------------------------------------\n\n  result.changeCount = result.changes.length;\n\n\n  if (result.changeCount === 0) {\n\n    result.action = 'no_change';\n\n    result.reason =\n      'Canonical HRIS and Okta profiles match';\n\n  } else {\n\n    result.action = 'mover';\n\n    result.reason =\n      'One or more managed profile attributes changed';\n\n    result.changeSummary =\n      result.changes\n        .map(\n          (change) =>\n            `${change.field}: \"${change.from}\" -> \"${change.to}\"`\n        )\n        .join(' | ');\n\n    result.updatePayload = {\n      profile: updateProfile\n    };\n  }\n\n\n  output.push({\n    json: result\n  });\n}\n\n\n// ============================================================\n// OKTA-ONLY IDENTITIES\n//\n// Managed Okta identities that did not appear in the HRIS input.\n//\n// They may represent:\n//   - an employee who became inactive / Left\n//   - an orphaned Okta account\n//\n// The reason explains which case applies.\n// ============================================================\n\nfor (const [hrId, user] of oktaByHrId) {\n\n  // Already processed as an HRIS identity.\n  if (processed.has(hrId)) {\n    continue;\n  }\n\n\n  // Already fully deprovisioned: no action required.\n  if (user.status === 'DEPROVISIONED') {\n    continue;\n  }\n\n\n  const hris = hrById.get(hrId);\n\n  let reason;\n\n  if (hris) {\n\n    reason =\n      `HRIS status is ${hris.status}, Okta account is still ${user.status}`;\n\n  } else {\n\n    reason =\n      'No matching HRIS record (orphan)';\n  }\n\n\n  output.push({\n    json: {\n      hrId,\n\n      action: 'okta_only',\n\n      reason,\n\n      oktaUserId: user.id,\n\n      oktaStatus: user.status,\n\n      changes: [],\n\n      changeCount: 0,\n\n      changeSummary: '',\n\n      updatePayload: null,\n\n      errorSummary: '',\n\n      profile: user.profile || {}\n    }\n  });\n}\n\n\n// ============================================================\n// RETURN CLASSIFIED IDENTITIES\n// ============================================================\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        496
+      ],
+      "id": "89cce5a1-6608-4557-a940-3037c51e676c",
+      "name": "Identity - Classify HRIS vs Okta"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "=joiner",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "d09e7422-f9b2-43f1-831e-0007a8534bb7"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Joiner"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "92570721-4121-44dc-bf17-9439654d0951",
+                    "leftValue": "={{ String($json.action ?? '').trim() }}",
+                    "rightValue": "mover",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Mover"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "13fb6453-576c-406e-9e38-a4d85078b76b",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "no_change",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "No Change"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "e7b0b867-2e6a-4e6f-9b5a-713a1f83b5c6",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "okta_only",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Okta Only"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "02c86401-c01b-403a-9562-f894be880ac1",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "^(invalid|conflict)$",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Invalid or Conflict"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "fa8b202b-efcb-47dd-b396-2430624d55fb",
+                    "leftValue": "={{ String($json.action ?? '').trim() }}",
+                    "rightValue": "rehire",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rehire"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1904,
+        496
+      ],
+      "id": "58f06d05-66dd-47ca-938e-124d5f823277",
+      "name": "Route - Identity Action"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://integrator-4769148.okta.com/api/v1/users/' + $json.oktaUserId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Okta-Get-Access-Token').first().json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "=application/json"
+            },
+            {
+              "name": "Content-Type",
+              "value": "=application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.updatePayload }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2208,
+        368
+      ],
+      "id": "344a9a32-21fe-4f4a-be66-16cb9b5d5e3f",
+      "name": "OKTA-Update-User"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Offboarding - Detect Candidates\n// Input: ALL employees from HRIS-Split-Employees\n// Output: only employees who are offboarding candidates\n//\n// Eligibility policy:\n// Any single HR offboarding signal is enough:\n// - status === \"Left\" -> eligible immediately\n// - relieving_date -> eligible from 18:00 Berlin on that date\n// - contractor contract_end_date -> eligible from 18:00 Berlin on that date\n//\n// Date policy:\n// relieving_date and contract_end_date represent the final working/access day.\n// Therefore, date-based offboarding becomes eligible at 18:00 Berlin on that date.\n// If the scheduled 18:00 run is missed, a later run catches up.\n//\n// Schedule policy:\n// Weekdays: hourly from 08:00 through 18:00\n// Weekends: 18:00 catch-up run\n\nconst now = $now.setZone('Europe/Berlin');\nconst today = now.toISODate();\nconst currentTime = now.toFormat('HH:mm');\n\nconst dateSignalReached = (date) => {\n  if (!date) {\n    return false;\n  }\n\n  return (\n    date < today ||\n    (date === today && currentTime >= '18:00')\n  );\n};\n\nreturn items\n  .filter(item => {\n    const emp = item.json;\n\n    const isLeft = emp.status === 'Left';\n\n    const relievingDateReached =\n      dateSignalReached(emp.relieving_date);\n\n    const contractorEndDateReached =\n      emp.custom_worker_type === 'Contractor' &&\n      dateSignalReached(emp.contract_end_date);\n\n    return (\n      isLeft ||\n      relievingDateReached ||\n      contractorEndDateReached\n    );\n  })\n  .map(item => {\n    const emp = item.json;\n\n    const isLeft = emp.status === 'Left';\n\n    const relievingDateReached =\n      dateSignalReached(emp.relieving_date);\n\n    const contractorEndDateReached =\n      emp.custom_worker_type === 'Contractor' &&\n      dateSignalReached(emp.contract_end_date);\n\n    let offboarding_trigger;\n\n    if (isLeft && relievingDateReached) {\n      offboarding_trigger = 'left_and_relieving_date_reached';\n    } else if (isLeft) {\n      offboarding_trigger = 'status_left';\n    } else if (contractorEndDateReached) {\n      offboarding_trigger = 'contract_end_date_reached';\n    } else {\n      offboarding_trigger = 'relieving_date_reached';\n    }\n\n    return {\n      json: {\n        ...emp,\n        offboarding_trigger,\n        deactivation_eligible: true,\n        offboarding_detected_on: today,\n      },\n    };\n  });"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        832
+      ],
+      "id": "3a5141fd-b37c-42a9-903d-967e88cc81c1",
+      "name": "Offboarding - Detect Candidates"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Offboarding - Match Okta User\n//\n// Input: candidates from Offboarding - Detect Candidates\n// Reference: Okta-Get-Users from the same execution\n// Match key: Frappe employee name <-> Okta profile.employeeNumber\n//\n// Guard:\n// Okta-Get-Users has \"Always Output Data\" enabled. If Okta returns\n// no users (e.g. missing permissions returning [] with HTTP 200),\n// the node emits one EMPTY item instead of zero items.\n// Without this guard, every candidate would silently become\n// \"no_identity_to_deactivate\" and leavers would keep their access.\n// Only real Okta users (items with an id) are counted.\n\nconst candidates = items;\n\nconst oktaUsers = $('Okta-Get-Users')\n  .all()\n  .filter(oktaItem => oktaItem.json?.id);\n\nif (oktaUsers.length === 0) {\n  throw new Error(\n    'Okta-Get-Users returned no HR users; refusing to evaluate offboarding'\n  );\n}\n\nreturn candidates.map(item => {\n  const employee = item.json;\n  const employeeNumber = employee.name;\n\n  const matches = oktaUsers.filter(oktaItem =>\n    oktaItem.json?.profile?.employeeNumber === employeeNumber\n  );\n\n  let match_status;\n\n  if (matches.length === 0) {\n    match_status = 'no_identity_to_deactivate';\n  } else if (matches.length > 1) {\n    match_status = 'duplicate_identity';\n  } else {\n    match_status = 'matched';\n  }\n\n  return {\n    json: {\n      ...employee,\n      match_status,\n      match_count: matches.length,\n\n      ...(matches.length === 1\n        ? {\n            okta_user_id: matches[0].json.id,\n            okta_user_status: matches[0].json.status,\n            okta_user: matches[0].json,\n          }\n        : {}),\n    },\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        896
+      ],
+      "id": "f58c54bd-5be1-460f-a1e2-41ac3e1abd44",
+      "name": "Offboarding - Match Okta User"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.okta_user_status === 'DEPROVISIONED' || $json.okta_user?.transitioningToStatus === 'DEPROVISIONED' }}",
+                    "rightValue": "DEPROVISIONED",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "bb1a5d93-6a9f-4126-a36a-974f748c452c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "=already_deprovisioned"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "856bd344-0928-428b-b804-6799160406f0",
+                    "leftValue": "={{ ['STAGED','PROVISIONED','ACTIVE','RECOVERY','LOCKED_OUT','PASSWORD_EXPIRED'].includes($json.okta_user_status) }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "=eligible"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "5a4c09cb-33f4-468b-9a11-93a7616a085d",
+                    "leftValue": "={{ $json.okta_user_status === 'SUSPENDED' }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "=review"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "unexpected_status"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2016,
+        928
+      ],
+      "id": "0bc7260b-5197-4dd0-8e05-28174b7f7f5d",
+      "name": "Offboarding - Check Okta Status"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "matched",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "37649d2f-2438-4126-8869-d106ca7d1e84"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "matched"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "cbb299cb-470a-40c0-a38a-05eb313a59a7",
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "no_identity_to_deactivate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "no_identity"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a9a13780-3c4e-44cc-8414-8ae74efddd06",
+                    "leftValue": "={{ $json.match_status }}",
+                    "rightValue": "duplicate_identity",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "duplicate_identity"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1616,
+        880
+      ],
+      "id": "6058d369-e319-4ddf-adbb-e0f199a52d58",
+      "name": "Offboarding - Route Match Result"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://integrator-4769148.okta.com/api/v1/users/' + $json.okta_user_id + '/lifecycle/deactivate?sendEmail=false' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Okta-Get-Access-Token').first().json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "=application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2512,
+        944
+      ],
+      "id": "df0babf2-5482-4e2b-be12-7d6429c27e50",
+      "name": "OKTA-Deactivate-User",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://integrator-4769148.okta.com/api/v1/users/' + $json.oktaUserId + '/lifecycle/activate?sendEmail=false' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Okta-Get-Access-Token').first().json.access_token }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2112,
+        160
+      ],
+      "id": "58d55fed-2f79-4cc0-9905-36e0de71bf00",
+      "name": "Okta-Reactivate-User"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C63AS8UKS",
+          "mode": "id"
+        },
+        "text": "=✅ Joiner provisioned in Okta\nEmployee: {{ $json.profile.employeeNumber }}\n{{ $json.profile.firstName }} {{ $json.profile.lastName }}\nDepartment: {{ $json.profile.department }}\nOkta status: {{ $json.status }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2496,
+        512
+      ],
+      "id": "392d9a59-73a9-4aad-b3fe-e0028a5aafe5",
+      "name": "Slack – Notify Joiner",
+      "webhookId": "eb9ff108-dacd-4b62-bfcf-6f4e94e45bb7",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Offboarding - Leaver Circuit Breaker\n//\n// Position: Check Okta Status (eligible) -> here -> OKTA-Deactivate-User\n//\n// Counts only identities about to be deactivated in THIS run.\n// Historical leavers (already DEPROVISIONED) never reach this node.\n//\n// Policy:\n// - 1–2 eligible deactivations -> continue\n// - >2                         -> fail closed (error-handler alerts #it-alerts)\n//\n// Threshold is intentionally conservative for this 7-person lab.\n// Reference points: Okta import safeguard default 20%,\n// Microsoft Entra accidental-deletion default 500 per sync cycle.\n\nconst MAX_DEACTIVATIONS_PER_RUN = 2;\n\nconst count = items.length;\n\nif (count > MAX_DEACTIVATIONS_PER_RUN) {\n  throw new Error(\n    `OFFBOARDING CIRCUIT BREAKER: ${count} deactivations pending; maximum allowed is ${MAX_DEACTIVATIONS_PER_RUN}`\n  );\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        944
+      ],
+      "id": "7b2fa1ba-1b92-45b1-9b98-cd6bd1d6cd94",
+      "name": "Offboarding - Leaver Circuit Breaker"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C63AS8UKS",
+          "mode": "id"
+        },
+        "text": "=🧪 DRY RUN – would deactivate\nEmployee: {{ $json.name }} – {{ $json.first_name }} {{ $json.last_name }}\nTrigger: {{ $json.offboarding_trigger }}\nOkta status: {{ $json.okta_user_status }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2528,
+        1136
+      ],
+      "id": "21d5670b-96b4-4f35-89ec-b8cc8b2c079a",
+      "name": "Slack – Dry Run Leaver",
+      "webhookId": "f99e5d6b-992b-4dad-b6fb-c865ecaedbba",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C4TPZLETH",
+          "mode": "id"
+        },
+        "text": "=⚠️ Offboarding needs review – no action taken     \nEmployee: {{ $json.name }} – {{ $json.first_name }} {{ $json.last_name }}     \nTrigger: {{ $json.offboarding_trigger }}     \nOkta status: {{ $json.okta_user_status || 'missing' }}     \nReason: {{ $json.okta_user_status === 'SUSPENDED' ? 'Okta account is SUSPENDED; deactivation needs a human decision' : 'Unexpected Okta status; automation did not act' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2352,
+        1184
+      ],
+      "id": "6a0dd7ae-f566-4c94-88e7-7b46b3befa72",
+      "name": "Slack – Leaver Needs Review",
+      "webhookId": "29b635a1-bfb8-46e1-a5bc-0127e4bf4c24",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C4TPZLETH",
+          "mode": "id"
+        },
+        "text": "=⚠️ Duplicate Okta identity – no action taken\nEmployee: {{ $json.name }} – {{ $json.first_name }} {{ $json.last_name }}\nOkta users with this employeeNumber: {{ $json.match_count }}\nFix the duplicate in Okta; offboarding resumes automatically.",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2016,
+        1312
+      ],
+      "id": "3bde363a-e1d3-45b6-bd5b-9762762911e6",
+      "name": "Slack – Duplicate Identity",
+      "webhookId": "39b1139f-73e1-4124-9364-2dbef7c150c5",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C4TPZLETH",
+          "mode": "id"
+        },
+        "text": "=⚠️ Identity {{ $json.action }} – no action taken\nEmployee: {{ $json.hrId }}\nReason: {{ $json.reason }}\nDetails: {{ $json.errorSummary || '–' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2352,
+        720
+      ],
+      "id": "c4457600-b033-40fd-a136-a98c043c3857",
+      "name": "Slack – Identity Invalid or Conflict",
+      "webhookId": "eddedbe4-20f8-4467-9844-3ed594a2975d",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "=0 8-18 * * 1-5"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "=0 18 * * 0,6"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        16,
+        240
+      ],
+      "id": "3c509fd9-f42c-4ead-a575-4a9bc6f803dd",
+      "name": "Schedule – Weekdays hourly + weekend 18:00"
     }
   ],
   "pinData": {},
@@ -292,7 +917,7 @@
       "main": [
         [
           {
-            "node": "Compare-HRIS-vs-OKTA-(Datasets)",
+            "node": "Merge",
             "type": "main",
             "index": 1
           }
@@ -303,29 +928,12 @@
       "main": [
         [
           {
-            "node": "Compare-HRIS-vs-OKTA-(Datasets)",
+            "node": "Merge",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "Compare-HRIS-vs-OKTA-(Datasets)": {
-      "main": [
-        [
+          },
           {
-            "node": "IF - Status is Active",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "IF - Status is Active": {
-      "main": [
-        [
-          {
-            "node": "OKTA-Create-User",
+            "node": "Offboarding - Detect Candidates",
             "type": "main",
             "index": 0
           }
@@ -347,15 +955,191 @@
           }
         ]
       ]
+    },
+    "Prepare-Okta-Identity": {
+      "main": [
+        [
+          {
+            "node": "Identity - Classify HRIS vs Okta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Prepare-Okta-Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identity - Classify HRIS vs Okta": {
+      "main": [
+        [
+          {
+            "node": "Route - Identity Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route - Identity Action": {
+      "main": [
+        [
+          {
+            "node": "OKTA-Create-User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "OKTA-Update-User",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "node": "Slack – Identity Invalid or Conflict",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Okta-Reactivate-User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding - Detect Candidates": {
+      "main": [
+        [
+          {
+            "node": "Offboarding - Match Okta User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding - Match Okta User": {
+      "main": [
+        [
+          {
+            "node": "Offboarding - Route Match Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding - Route Match Result": {
+      "main": [
+        [
+          {
+            "node": "Offboarding - Check Okta Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "Slack – Duplicate Identity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding - Check Okta Status": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Offboarding - Leaver Circuit Breaker",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack – Leaver Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack – Leaver Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OKTA-Create-User": {
+      "main": [
+        [
+          {
+            "node": "Slack – Notify Joiner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offboarding - Leaver Circuit Breaker": {
+      "main": [
+        [
+          {
+            "node": "OKTA-Deactivate-User",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Slack – Dry Run Leaver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule – Weekdays hourly + weekend 18:00": {
+      "main": [
+        [
+          {
+            "node": "FrappeHR-Get-Employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "KXDtIpmFHNe2bToZ",
+    "timezone": "Europe/Berlin",
+    "callerPolicy": "workflowsFromSameOwner"
   },
-  "versionId": "b726312c-8105-443e-bde2-b90c15d71132",
+  "versionId": "e46a2cc6-ef3b-4335-960d-518f96853b36",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "a94e29c1f0a30a0dfc87a4732999fa9522e8c5e082806fb883c9c46ba4f3ca4b"

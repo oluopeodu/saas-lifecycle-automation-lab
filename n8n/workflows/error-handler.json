@@ -1,0 +1,73 @@
+{
+  "name": "error-handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a66fe23b-a3d0-4131-9ce7-1efbe3942364",
+      "name": "Error Trigger"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0C4TPZLETH",
+          "mode": "id"
+        },
+        "text": "=🚨 *n8n Workflow Failure*  \n\n*Workflow:* {{ $json.workflow.name }} \n*Failed node:* {{ $json.execution?.lastNodeExecuted ?? 'trigger' }} \n*Error:* {{ ($json.execution?.error?.message ?? 'unknown error').slice(0, 200) }} \n*Execution:* {{ $json.execution?.id ?? 'not saved' }} \n*Time:* {{ $now.setZone('Europe/Berlin').toFormat('yyyy-LL-dd HH:mm') }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        208,
+        0
+      ],
+      "id": "ab2045c3-c0c9-49a8-85ef-c5cc082fc712",
+      "name": "Slack – Alert #it-alerts",
+      "webhookId": "99531e82-d5e8-4c2b-a730-2fff0989dcea",
+      "credentials": {
+        "slackApi": {
+          "id": "iJiK7TD7gl6fIFqI",
+          "name": "Slack – lifecycle-bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Slack – Alert #it-alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "772803c4-7871-4cd1-b9f5-b66bafcef65f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a94e29c1f0a30a0dfc87a4732999fa9522e8c5e082806fb883c9c46ba4f3ca4b"
+  },
+  "nodeGroups": [],
+  "id": "KXDtIpmFHNe2bToZ",
+  "tags": []
+}
