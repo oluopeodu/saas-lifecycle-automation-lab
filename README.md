@@ -98,7 +98,7 @@ The following tools and accounts are used to build and operate the lab:
 - Terraform
 - A Cloudflare account for DNS automation
 
-Some integrations require API credentials and service account configuration. Keep credentials in local environment variables or secret-management systems and never commit them to Git.
+Some integrations require API credentials and service account configuration. Kept credentials in local environment variables / secret-management systems.
 
 
 
